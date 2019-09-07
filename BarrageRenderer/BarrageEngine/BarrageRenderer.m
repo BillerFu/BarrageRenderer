@@ -42,7 +42,6 @@ NSString * const kBarrageRendererContextTimestamp = @"kBarrageRendererContextTim
     BarrageCanvas * _canvas; // 画布
     BarrageClock * _clock;
     NSMutableDictionary * _spriteClassMap;
-    __block NSTimeInterval _time;
     NSMutableDictionary * _context; // 渲染器上下文
     
     NSMutableArray * _preloadedDescriptors; //预加载的弹幕
@@ -51,6 +50,7 @@ NSString * const kBarrageRendererContextTimestamp = @"kBarrageRendererContextTim
     NSTimeInterval _pausedDuration; // 暂停持续时间
     NSDate * _pausedTime; // 上次暂停时间; 如果为nil, 说明当前没有暂停
 }
+@property(nonatomic,assign)NSTimeInterval time;
 @property(nonatomic,assign)NSTimeInterval pausedDuration; // 暂停时间
 @end
 
@@ -68,6 +68,7 @@ NSString * const kBarrageRendererContextTimestamp = @"kBarrageRendererContextTim
         _startTime = nil; // 尚未开始
         _pausedTime = nil;
         _redisplay = NO;
+        _smoothness = 0.0f;
         self.pausedDuration = 0;
         [self initClock];
     }
@@ -80,20 +81,29 @@ NSString * const kBarrageRendererContextTimestamp = @"kBarrageRendererContextTim
     __weak id weakSelf = self;
     _clock = [BarrageClock clockWithHandler:^(NSTimeInterval time){
         BarrageRenderer * strongSelf = weakSelf;
-        strongSelf->_time = time;
+        strongSelf.time = time;
         [strongSelf update];
     }];
 }
 
 #pragma mark - control
+/// 接收弹幕，并校对时间
 - (void)receive:(BarrageDescriptor *)descriptor
+{
+    [self receive:descriptor withCorrection:YES];
+}
+
+/// 接收弹幕, 并决定是否要校对时间
+- (void)receive:(BarrageDescriptor *)descriptor withCorrection:(BOOL)correction
 {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!_startTime) { // 如果没有启动,则抛弃接收弹幕
             return;
         }
         BarrageDescriptor * descriptorCopy = [descriptor copy];
-        [self convertDelayTime:descriptorCopy];
+        if (correction) {
+            [self convertDelayTime:descriptorCopy];
+        }
         BarrageSprite * sprite = [BarrageSpriteFactory createSpriteWithDescriptor:descriptorCopy];
         [_dispatcher addSprite:sprite];
         if (_recording) {
@@ -106,11 +116,12 @@ NSString * const kBarrageRendererContextTimestamp = @"kBarrageRendererContextTim
 {
     // 如果之前调整过frame,_canvas的layoutSubviews不会及时调用，于是显示时会出问题
     // 解决bug: https://github.com/unash/BarrageRenderer/issues/16
-    [_canvas layoutSubviews];
+    [_canvas setNeedsLayout];
     if (!_startTime) { // 尚未启动,则初始化时间系统
         _startTime = [NSDate date];
         _records = [[NSMutableArray alloc]init];
         _dispatcher = [[BarrageDispatcher alloc]init];
+        _dispatcher.smoothness = self.smoothness;
         _dispatcher.cacheDeadSprites = self.redisplay;
         _dispatcher.delegate = self;
     }
@@ -122,7 +133,7 @@ NSString * const kBarrageRendererContextTimestamp = @"kBarrageRendererContextTim
     [_clock start];
     if (_preloadedDescriptors.count) {
         for (BarrageDescriptor * descriptor in _preloadedDescriptors) {
-            [self receive:descriptor];
+            [self receive:descriptor withCorrection:NO];
         }
         [_preloadedDescriptors removeAllObjects];
     }
@@ -169,6 +180,14 @@ NSString * const kBarrageRendererContextTimestamp = @"kBarrageRendererContextTim
     _redisplay = redisplay;
     if (_dispatcher) {
         _dispatcher.cacheDeadSprites = _redisplay;
+    }
+}
+
+- (void)setSmoothness:(CGFloat)smoothness
+{
+    _smoothness = smoothness;
+    if (_dispatcher) {
+        _dispatcher.smoothness = smoothness;
     }
 }
 
@@ -220,6 +239,26 @@ NSString * const kBarrageRendererContextTimestamp = @"kBarrageRendererContextTim
     return number;
 }
 
+- (void)removePresentSpritesWithName:(NSString *)spriteName
+{
+    Class class = NSClassFromString(spriteName);
+    for (BarrageSprite * sprite in _dispatcher.activeSprites) {
+        if (!class || [sprite class] == class) {
+            [sprite forceInvalid];
+        }
+    }
+}
+
+- (void)removeSpriteWithIdentifier:(NSString *)identifier
+{
+    for (BarrageSprite * sprite in _dispatcher.activeSprites) {
+        if ([sprite.viewParams[@"identifier"] isEqualToString:identifier]) {
+            [sprite forceInvalid];
+            break;
+        }
+    }
+}
+
 #pragma mark - record
 /// 此方法会修改desriptor的值
 - (void)recordDescriptor:(BarrageDescriptor *)descriptor
@@ -245,7 +284,7 @@ NSString * const kBarrageRendererContextTimestamp = @"kBarrageRendererContextTim
 {
     if (_startTime) {
         for (BarrageDescriptor * descriptor in descriptors) {
-            [self receive:descriptor];
+            [self receive:descriptor withCorrection:NO];
         }
     }
     else
@@ -266,7 +305,7 @@ NSString * const kBarrageRendererContextTimestamp = @"kBarrageRendererContextTim
 {
     [_dispatcher dispatchSprites]; // 分发精灵
     for (BarrageSprite * sprite in _dispatcher.activeSprites) {
-        [sprite updateWithTime:_time];
+        [sprite updateWithTime:self.time];
     }
 }
 
@@ -287,13 +326,16 @@ NSString * const kBarrageRendererContextTimestamp = @"kBarrageRendererContextTim
         [_context setObject:[itemMap copy] forKey:kBarrageRendererContextRelatedSpirts];
     }
     
-    [_context setObject:@(_time) forKey:kBarrageRendererContextTimestamp];
+    [_context setObject:@(self.time) forKey:kBarrageRendererContextTimestamp];
     
     NSInteger index = [self viewIndexOfSprite:sprite];
     
     [sprite activeWithContext:_context];
     [self indexAddSprite:sprite];
     [_canvas insertSubview:sprite.view atIndex:index];
+    if (self.delegate && [self.delegate respondsToSelector:@selector(barrageRenderer:spriteStage:spriteParams:)]) {
+        [self.delegate barrageRenderer:self spriteStage:BarrageSpriteStageBegin spriteParams:sprite.viewParams];
+    }
 }
 
 - (NSUInteger)viewIndexOfSprite:(BarrageSprite *)sprite
@@ -316,6 +358,10 @@ NSString * const kBarrageRendererContextTimestamp = @"kBarrageRendererContextTim
 {
     [self indexRemoveSprite:sprite];
     [sprite.view removeFromSuperview];
+    [sprite deactive];
+    if (self.delegate && [self.delegate respondsToSelector:@selector(barrageRenderer:spriteStage:spriteParams:)]) {
+        [self.delegate barrageRenderer:self spriteStage:BarrageSpriteStageEnd spriteParams:sprite.viewParams];
+    }
 }
 
 - (NSTimeInterval)timeForBarrageDispatcher:(BarrageDispatcher *)dispatcher

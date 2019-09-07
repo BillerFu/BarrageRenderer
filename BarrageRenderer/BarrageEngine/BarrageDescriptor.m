@@ -49,6 +49,7 @@
     if (self = [super init]) {
         _identifier = [[NSProcessInfo processInfo]globallyUniqueString];
         _params = [[NSMutableDictionary alloc]init];
+        _params[@"identifier"] = _identifier;
     }
     return self;
 }
@@ -62,4 +63,9 @@
     return copy;
 }
 
+- (void)clickAction:(BarrageClickAction)clickAction{
+    
+    self.params[@"clickAction"] = clickAction;
+    
+}
 @end

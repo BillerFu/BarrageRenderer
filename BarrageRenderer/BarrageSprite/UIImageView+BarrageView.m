@@ -24,9 +24,23 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-#import "BarrageWalkSprite.h"
+#import "UIImageView+BarrageView.h"
+#import "UIView+BarrageView.h"
 
-/// 移动文字精灵
-@interface BarrageWalkTextSprite : BarrageWalkSprite
+@implementation UIImageView (BarrageView)
+
+- (void)prepareForReuse
+{
+    [super prepareForReuse];
+    self.image = nil;
+}
+
+- (void)configureWithParams:(NSDictionary *)params
+{
+    [super configureWithParams:params];
+    
+    UIImage *image = params[@"image"];
+    if (image) self.image = image;
+}
 
 @end

@@ -25,7 +25,7 @@
 // THE SOFTWARE.
 
 #import <Foundation/Foundation.h>
-
+#import "BarrageSpriteProtocol.h"
 /// 统一的持久化层
 @interface BarrageDescriptor : NSObject<NSCopying>
 
@@ -40,5 +40,8 @@
 
 /// 弹幕标识符,用于防止弹幕重复,内部一次性生成
 @property(nonatomic,strong,readonly)NSString * identifier;
+
+/// 弹幕点击事件回调
+- (void)clickAction:(BarrageClickAction)clickAction;
 
 @end

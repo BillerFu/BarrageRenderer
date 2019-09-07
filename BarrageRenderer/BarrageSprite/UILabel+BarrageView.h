@@ -24,9 +24,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-#import "BarrageWalkSprite.h"
+#import <UIKit/UIKit.h>
+#import "BarrageSpriteProtocol.h"
 
-/// 移动文字精灵
-@interface BarrageWalkTextSprite : BarrageWalkSprite
+@interface UILabel (BarrageView)<BarrageViewProtocol>
 
 @end
